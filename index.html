@@ -50,7 +50,7 @@ button:disabled{opacity:.45;cursor:default}
   // ---- offline: cache this page so it opens with no connection after the first visit
   if('serviceWorker' in navigator){ try{ navigator.serviceWorker.register('sw.js'); }catch(e){} }
   function net(){ var on=navigator.onLine; $('net').textContent=on?'online':'offline'; $('net').className='net '+(on?'on':'off'); }
-  window.addEventListener('online',function(){ net(); }); window.addEventListener('offline',function(){ net(); if(lsGet0('mdldrec-mode')!=='cloud') modeCheck(); }); net();
+  window.addEventListener('online',function(){ net(); if(!want){ radio('cloud'); $('modeNote').textContent='Back online: using online speech-to-text, the most accurate.'; } }); window.addEventListener('offline',function(){ net(); modeCheck(); }); net();
   // ---- drafts: saved on this device as you talk
   function ls(k,v){ try{ if(v===undefined) return localStorage.getItem(k); if(v===null) localStorage.removeItem(k); else localStorage.setItem(k,v); }catch(e){ return null; } }
   function allDrafts(){ var out=[]; try{ for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); if(k.indexOf('mdldrec:')===0){ var d=JSON.parse(localStorage.getItem(k)||'{}'); if(d.text&&d.text.trim()) out.push({key:k,ctx:k.slice(8),text:d.text,at:d.at||''}); } } }catch(e){} return out.sort(function(a,b){ return String(b.at).localeCompare(String(a.at)); }); }
@@ -86,8 +86,8 @@ button:disabled{opacity:.45;cursor:default}
     }).catch(function(){ radio('cloud'); $('modeNote').textContent='Using online speech-to-text.'; }); }
   function lsGet0(k){ try{ return localStorage.getItem(k)||''; }catch(e){ return ''; } }
   // Online by default. The on-device check runs only when you pick "On this computer", when you're offline, or if you used it last time.
-  if(!SR) modeCheck(); else if(!navigator.onLine||lsGet0('mdldrec-mode')==='local') modeCheck(); else { radio('cloud'); $('modeNote').textContent='Online speech-to-text. Pick "On this computer" to check whether this laptop can transcribe offline.'; }
-  [].forEach.call(document.querySelectorAll('input[name=mode]'),function(r){ r.onchange=function(){ try{ localStorage.setItem('mdldrec-mode',r.value); }catch(e){} if(r.value==='local') modeCheck(); }; });
+  if(!SR||!navigator.onLine) modeCheck(); else { radio('cloud'); $('modeNote').textContent='Online speech-to-text, the most accurate. With no connection it switches to on this computer, which is rougher: best for short notes.'; }
+  [].forEach.call(document.querySelectorAll('input[name=mode]'),function(r){ r.onchange=function(){ if(r.value==='local') modeCheck(); }; });
   function state(on,label){ $('dot').className='dot'+(on?' on':''); $('st').textContent=label; $('start').disabled=on||!SR; $('pause').disabled=!on; $('send').disabled=!$('text').value.trim()&&!on; }
   function msg(t,bad){ $('msg').innerHTML=t; $('msg').style.color=bad?'var(--red)':'var(--teal)'; }
   function begin(){ if(!SR) return; var local=mode()==='local';
@@ -100,7 +100,7 @@ button:disabled{opacity:.45;cursor:default}
       else if(ev.error==='network'){ want=false; state(false,'Paused: no connection'); msg('The connection dropped. Everything so far is saved here. '+(localOK?'Switch to "On this computer" and press Start to keep going.':'Keep going on your phone\'s recorder and paste it in later.'),true); }
       else if(ev.error==='language-not-supported'){ want=false; state(false,'Not ready'); msg('On-device English is not installed yet. Download it while online, or switch to Online.',true); }
       else if(ev.error!=='no-speech'&&ev.error!=='aborted') msg('Speech-to-text hiccup ('+ev.error+'). Still listening.',true); };
-    rec.onend=function(){ $('interim').textContent=''; if(want){ try{ rec.start(); }catch(e){ setTimeout(begin,300); } } else state(false,$('text').value.trim()?'Paused':'Not recording'); };
+    rec.onend=function(){ var it=$('interim').textContent.trim(); if(it&&want){ var box=$('text'); box.value+=(box.value&&!/\s$/.test(box.value)?' ':'')+it+'.'; save(); } $('interim').textContent=''; if(want){ try{ rec.start(); }catch(e){ setTimeout(begin,150); } } else state(false,$('text').value.trim()?'Paused':'Not recording'); };
     try{ rec.start(); want=true; state(true,'Recording'+(local?' on this computer':'')); msg(''); }catch(e){ msg('Could not start: '+e.message,true); } }
   $('start').onclick=begin;
   $('pause').onclick=function(){ want=false; try{ rec&&rec.stop(); }catch(e){} };
@@ -110,7 +110,7 @@ button:disabled{opacity:.45;cursor:default}
       acked=false; window.opener.postMessage({type:'MDLD_TRANSCRIPT', text:text, ctx:ctx},hubOrigin); msg('Sending…');
       var t0=Date.now(), iv=setInterval(function(){ if(acked){ clearInterval(iv); ls(key,null); msg('Sent to the Hub. Closing…'); setTimeout(function(){ window.close(); },800); }
         else if(Date.now()-t0>4000){ clearInterval(iv); msg('The Hub did not confirm, so the text stays saved here. Check that the Hub is online and click Stop &amp; send again.',true); } },200); },400); };
-  window.addEventListener('beforeunload',function(e){ if(want){ e.preventDefault(); e.returnValue=''; } });
+  window.addEventListener('pagehide',function(){ want=false; save(); try{ rec&&rec.stop(); }catch(e){} });
   state(false,$('text').value.trim()?'Saved text loaded':'Not recording');
 })();
 </script>
