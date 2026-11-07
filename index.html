@@ -35,6 +35,10 @@ button:disabled{opacity:.45;cursor:default}
   <label><input type="checkbox" id="keepAudio" checked> Also keep the audio so the Hub can label who said what</label>
   <div style="color:var(--sub);margin-top:4px" id="audNote">Put the computer between you and the other person. The words still show up here as you talk; the speaker labels are added a minute or two after you send.</div>
 </div>
+<div class="mode">
+  <label>Periods in the text: <select id="sentSel"><option value="2500">Fewer (only after a long pause)</option><option value="1800" selected>Balanced</option><option value="1000">More (after a short pause)</option></select></label>
+  <div style="color:var(--sub);margin-top:4px">A short break to think stays in the same sentence. A longer pause ends it. You can change this any time and fix anything by hand before you send.</div>
+</div>
 <div class="bar">
   <button class="go" id="start">Start recording</button>
   <button class="ghost" id="pause" disabled>Pause</button>
@@ -116,6 +120,20 @@ button:disabled{opacity:.45;cursor:default}
   // Online by default. The on-device check runs only when you pick "On this computer", when you're offline, or if you used it last time.
   if(!SR||!navigator.onLine) modeCheck(); else { radio('cloud'); $('modeNote').textContent='Online speech-to-text, the most accurate. With no connection it switches to on this computer, which is rougher: best for short notes.'; }
   [].forEach.call(document.querySelectorAll('input[name=mode]'),function(r){ r.onchange=function(){ if(r.value==='local') modeCheck(); }; });
+  // ---- sentence breaks: a pause only ends a sentence if the silence before the next words is long enough
+  var lastFinalAt=0, segStart=0;
+  try{ var sv=localStorage.getItem('mdldrecSent'); if(sv&&$('sentSel')) $('sentSel').value=sv; }catch(e){}
+  $('sentSel').onchange=function(){ try{ localStorage.setItem('mdldrecSent',$('sentSel').value); }catch(e){} };
+  function cap(t){ return t.charAt(0).toUpperCase()+t.slice(1); }
+  function ended(t){ return /[.!?]["')\]]*\s*$/.test(t); }
+  function joinSeg(prev,t,gap,thr){ t=String(t||'').trim(); if(!t) return prev; if(!prev.trim()) return cap(t);
+    var base=prev.replace(/\s*$/,'');
+    if(ended(base)) return base+' '+cap(t);
+    if(gap>thr) return base+'. '+cap(t);
+    return base+' '+t; }
+  function addSeg(t,force){ var box=$('text'), now=Date.now(), gap=(segStart&&lastFinalAt)?(segStart-lastFinalAt):(lastFinalAt?now-lastFinalAt:99999), thr=Number($('sentSel').value)||1800;
+    box.value=joinSeg(box.value,t,force?0:gap,thr); lastFinalAt=Date.now(); segStart=0; box.scrollTop=box.scrollHeight; save(); }
+  function closeSentence(){ var box=$('text'), v=box.value.replace(/\s*$/,''); if(v&&!ended(v)){ box.value=v+'.'; save(); } }
   function state(on,label){ $('dot').className='dot'+(on?' on':''); $('st').textContent=label; $('start').disabled=on||!SR; $('pause').disabled=!on; $('send').disabled=!$('text').value.trim()&&!on&&!hasAudio(); }
   function msg(t,bad){ $('msg').innerHTML=t; $('msg').style.color=bad?'var(--red)':'var(--teal)'; }
   function begin(){ if(!SR) return; var local=mode()==='local';
@@ -123,15 +141,15 @@ button:disabled{opacity:.45;cursor:default}
     if(!local&&!navigator.onLine){ msg('You are offline. Online speech-to-text needs internet. '+(localOK?'Switch to "On this computer".':'Use your phone\'s recorder for now.'),true); return; }
     rec=new SR(); rec.continuous=true; rec.interimResults=true; rec.lang='en-US';
     if(local){ try{ rec.processLocally=true; }catch(e){} try{ if('mode' in rec) rec.mode='ondevice-only'; }catch(e){} }
-    rec.onresult=function(ev){ var tmp=''; for(var i=ev.resultIndex;i<ev.results.length;i++){ var r=ev.results[i]; if(r.isFinal){ var t=r[0].transcript.trim(); if(t){ var box=$('text'); box.value+=(box.value&&!/\s$/.test(box.value)?' ':'')+t.charAt(0).toUpperCase()+t.slice(1)+'.'; box.scrollTop=box.scrollHeight; save(); } } else tmp+=r[0].transcript; } $('interim').textContent=tmp; $('send').disabled=false; };
+    rec.onresult=function(ev){ var tmp=''; for(var i=ev.resultIndex;i<ev.results.length;i++){ var r=ev.results[i]; if(r.isFinal){ var t=r[0].transcript.trim(); if(t) addSeg(t); } else { if(!segStart) segStart=Date.now(); tmp+=r[0].transcript; } } $('interim').textContent=tmp; $('send').disabled=false; };
     rec.onerror=function(ev){ if(ev.error==='not-allowed'||ev.error==='service-not-allowed'){ want=false; state(false,'Microphone blocked'); msg('The microphone is blocked. Click the lock or mic icon in the address bar, allow the microphone, and try again.',true); }
       else if(ev.error==='network'){ want=false; state(false,'Paused: no connection'); msg('The connection dropped. Everything so far is saved here. '+(localOK?'Switch to "On this computer" and press Start to keep going.':'Keep going on your phone\'s recorder and paste it in later.'),true); }
       else if(ev.error==='language-not-supported'){ want=false; state(false,'Not ready'); msg('On-device English is not installed yet. Download it while online, or switch to Online.',true); }
       else if(ev.error!=='no-speech'&&ev.error!=='aborted') msg('Speech-to-text hiccup ('+ev.error+'). Still listening.',true); };
-    rec.onend=function(){ var it=$('interim').textContent.trim(); if(it&&want){ var box=$('text'); box.value+=(box.value&&!/\s$/.test(box.value)?' ':'')+it+'.'; save(); } $('interim').textContent=''; if(want){ try{ rec.start(); }catch(e){ setTimeout(begin,150); } } else state(false,$('text').value.trim()?'Paused':'Not recording'); };
+    rec.onend=function(){ var it=$('interim').textContent.trim(); if(it&&want){ addSeg(it); } $('interim').textContent=''; if(want){ try{ rec.start(); }catch(e){ setTimeout(begin,150); } } else state(false,$('text').value.trim()?'Paused':'Not recording'); };
     try{ rec.start(); want=true; state(true,'Recording'+(local?' on this computer':'')); msg(''); audioStart(); }catch(e){ msg('Could not start: '+e.message,true); } }
   $('start').onclick=begin;
-  $('pause').onclick=function(){ want=false; try{ rec&&rec.stop(); }catch(e){} audioPause(); };
+  $('pause').onclick=function(){ want=false; try{ rec&&rec.stop(); }catch(e){} audioPause(); setTimeout(closeSentence,400); };
   function waitFor(k,ms){ return new Promise(function(res,rej){ var t0=Date.now(), iv=setInterval(function(){ if(audAck[k]){ clearInterval(iv); res(audAck[k]); } else if(Date.now()-t0>ms){ clearInterval(iv); rej(new Error('The Hub did not answer in time.')); } },150); }); }
   function sendText(text){ return new Promise(function(res,rej){ acked=false; window.opener.postMessage({type:'MDLD_TRANSCRIPT', text:text, ctx:ctx},hubOrigin); msg('Sending the words…');
     var t0=Date.now(), iv=setInterval(function(){ if(acked){ clearInterval(iv); ls(key,null); $('text').value=''; res(); } else if(Date.now()-t0>4000){ clearInterval(iv); rej(new Error('The Hub did not confirm, so the text stays saved here. Check that the Hub is online and click Stop & send again.')); } },200); }); }
@@ -141,7 +159,7 @@ button:disabled{opacity:.45;cursor:default}
       window.opener.postMessage({type:'MDLD_AUDIO_META', id:id, part:pi, parts:list.length, n:n, mime:sx.mime, bytes:blob.size, ctx:ctx},hubOrigin);
       return waitFor(id+'|-1',8000).then(function(){ var c2=Promise.resolve(); for(var i=0;i<n;i++){ (function(i){ c2=c2.then(function(){ return b64Of(blob.slice(i*PIECE,(i+1)*PIECE)).then(function(b){ msg('Sending the audio: piece '+(i+1)+' of '+n+(list.length>1?' (recording '+(pi+1)+' of '+list.length+')':'')+'…'); window.opener.postMessage({type:'MDLD_AUDIO_CHUNK', id:id, i:i, n:n, b64:b},hubOrigin); return waitFor(id+'|'+i,120000); }); }); })(i); } return c2; }); }); });
     return chain; }
-  $('send').onclick=function(){ want=false; try{ rec&&rec.stop(); }catch(e){} save(); $('send').disabled=true;
+  $('send').onclick=function(){ want=false; try{ rec&&rec.stop(); }catch(e){} closeSentence(); save(); $('send').disabled=true;
     audioStop().then(function(){ setTimeout(function(){ var text=$('text').value.trim(), withAudio=hasAudio();
       if(!text&&!withAudio){ msg('Nothing to send yet.',true); return; }
       if(!window.opener||window.opener.closed||!hubOrigin){ msg('Saved on this device, not sent: this window is not connected to the Hub. When you are back online, open the Hub, go to this visit and click Record. The saved words and audio will be waiting there to send.',true); $('send').disabled=false; return; }
