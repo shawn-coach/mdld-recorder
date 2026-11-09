@@ -33,6 +33,7 @@ button:disabled{opacity:.45;cursor:default}
 </div>
 <div class="mode" id="audBox" style="display:none">
   <label><input type="checkbox" id="keepAudio" checked> Also keep the audio so the Hub can label who said what</label>
+  <div id="audLive" style="margin-top:6px;font-weight:600;color:var(--sub)">Audio: not recording yet</div>
   <div style="color:var(--sub);margin-top:4px" id="audNote">Put the computer between you and the other person. The words still show up here as you talk; the speaker labels are added a minute or two after you send.</div>
 </div>
 <div class="mode">
@@ -89,9 +90,12 @@ button:disabled{opacity:.45;cursor:default}
     if(mr&&mr.state==='recording') return Promise.resolve();
     return navigator.mediaDevices.getUserMedia({audio:{channelCount:1}}).then(function(st){ mstream=st; var mime=pickMime(), o={audioBitsPerSecond:32000}; if(mime) o.mimeType=mime; mr=new MediaRecorder(st,o);
       curS={id:'s'+Date.now(), mime:mr.mimeType||mime||'audio/webm', chunks:[]}; sessions.push(curS); var n=0;
-      mr.ondataavailable=function(ev){ if(ev.data&&ev.data.size){ curS.chunks.push(ev.data); idbPut({k:key,s:curS.id,mime:curS.mime,i:n++,blob:ev.data}); } };
-      mr.start(5000); }).catch(function(){ msg('The audio could not start, so only the words are being captured. Check the microphone permission and try again if you want the speaker labels.',true); }); }
-  function audioPause(){ try{ if(mr&&mr.state==='recording') mr.pause(); }catch(e){} }
+      mr.ondataavailable=function(ev){ if(ev.data&&ev.data.size){ curS.chunks.push(ev.data); idbPut({k:key,s:curS.id,mime:curS.mime,i:n++,blob:ev.data}); audShow(); } };
+      mr.onerror=function(){ audShow('Audio recording stopped with an error. Only the words are being captured.',true); };
+      mr.start(2000); audShow('Audio: starting…'); setTimeout(function(){ if(wantAudio()&&!hasAudio()) audShow('No audio has been captured yet. Only the words are being saved. Check the microphone permission for this page, or try Chrome on a computer.',true); },9000); }).catch(function(){ audShow('The audio could not start, so only the words are being captured. Check the microphone permission and try again if you want the speaker labels.',true); }); }
+  function audMB(){ return sessions.reduce(function(a,x){ return a+x.chunks.reduce(function(b,c){ return b+c.size; },0); },0)/1048576; }
+  function audShow(t,bad){ var el=$('audLive'); if(!el) return; if(!t){ var paused=mr&&mr.state==='paused'; t='Audio: '+(paused?'paused, ':'recording, ')+audMB().toFixed(2)+' MB saved on this device'; } el.textContent=t; el.style.color=bad?'var(--red)':'var(--teal)'; }
+  function audioPause(){ try{ if(mr&&mr.state==='recording'){ mr.pause(); audShow(); } }catch(e){} }
   function audioStop(){ return new Promise(function(res){ try{ if(mr&&mr.state!=='inactive'){ mr.onstop=function(){ try{ mstream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){} mr=null; res(); }; mr.stop(); return; } }catch(e){} try{ mstream&&mstream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){} mr=null; res(); }); }
   idbLoad();
   // ---- the Hub connection
@@ -162,6 +166,7 @@ button:disabled{opacity:.45;cursor:default}
   $('send').onclick=function(){ want=false; try{ rec&&rec.stop(); }catch(e){} closeSentence(); save(); $('send').disabled=true;
     audioStop().then(function(){ setTimeout(function(){ var text=$('text').value.trim(), withAudio=hasAudio();
       if(!text&&!withAudio){ msg('Nothing to send yet.',true); return; }
+      if(AUD_ON&&$('keepAudio').checked&&!withAudio&&!window.__noAudOK){ window.__noAudOK=true; msg('No audio was captured on this recording, so the Hub cannot label the speakers. Click Stop &amp; send again to send the words only, or check the microphone permission and record again.',true); audShow('No audio captured.',true); $('send').disabled=false; return; }
       if(!window.opener||window.opener.closed||!hubOrigin){ msg('Saved on this device, not sent: this window is not connected to the Hub. When you are back online, open the Hub, go to this visit and click Record. The saved words and audio will be waiting there to send.',true); $('send').disabled=false; return; }
       (text?sendText(text):Promise.resolve()).then(function(){ return withAudio?sendAudio():null; }).then(function(){ idbClear(); sessions=[]; msg('Sent to the Hub'+(withAudio?'. It is adding the speaker labels now; you can close this window.':'. Closing…')); setTimeout(function(){ window.close(); },withAudio?2500:800); })
         .catch(function(e){ msg(String(e.message||e)+(hasAudio()?' The audio is still saved on this device. Click Stop & send to try again.':''),true); $('send').disabled=false; state(false,'Not sent'); }); },300); }); };
